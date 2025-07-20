@@ -1,0 +1,538 @@
+{
+  "name": "CompanyInsight",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "company-insight",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        80
+      ],
+      "id": "b32a8092-87c5-4866-9498-87a53a9117c5",
+      "name": "Webhook",
+      "webhookId": "8f507346-2e6b-4c3c-a70c-4779f1443e6d"
+    },
+    {
+      "parameters": {
+        "url": "https://www.searchapi.io/api/v1/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.companyName }}"
+            },
+            {
+              "name": "api_key",
+              "value": "UxERws69kAoDN1MzSqwGCaN2"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        288,
+        -160
+      ],
+      "id": "f960ea91-178e-43b4-a71d-c02bf6fa5282",
+      "name": "Search Google"
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_LENGTH_PER_PAGE = 1000; // Adjust as needed\nconst pages = [];\n\nfor (const item of $input.all()) {\n  const snippet = item.json.plainText.substring(0, MAX_LENGTH_PER_PAGE);\n\n  pages.push(`---\\nContent:\\n${snippet}`);\n}\n\n// Combine all snippets into one big prompt\nconst combinedContent = pages.join(\"\\n\\n\");\n\nconst finalPrompt = `${ $('Webhook').first().json.body.prompt } from the following webpages:\\n\\n${combinedContent}\\n\\n(Summarize clearly. HTML may be partial.)`;\n\nreturn [\n  {\n    json: {\n      prompt: finalPrompt,\n      isPPTRequired: $('Edit Fields').first().json.isPPTRequired\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        -176
+      ],
+      "id": "50715efc-f973-4778-8b37-65c6a517a771",
+      "name": "Create Final Prompt"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = items[0].json;\n\nfunction extractLinks(json) {\n  const links = [];\n\n  if (json.organic_results) {\n    for (const result of json.organic_results) {\n      if (result.link) links.push(result.link);\n\n      if (result.sitelinks?.expanded) {\n        for (const sitelink of result.sitelinks.expanded) {\n          if (sitelink.link) links.push(sitelink.link);\n        }\n      }\n    }\n  }\n\n  if (json.related_questions) {\n    for (const question of json.related_questions) {\n      if (question.source?.link) {\n        links.push(question.source.link);\n      }\n    }\n  }\n\n  return links;\n}\n\nconst links = extractLinks(input);\n\n// Output each link as a separate item\nreturn links.map(link => ({ json: { url: link } }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        -160
+      ],
+      "id": "42720760-5a04-440b-b1a2-35ed324ead3b",
+      "name": "make a link list"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "chatgpt-4o-latest",
+          "mode": "list",
+          "cachedResultName": "CHATGPT-4O-LATEST"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1328,
+        80
+      ],
+      "id": "2dc160f3-3f1a-4b8a-9cef-c66406ab0793",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "AFvcIPQRNTjt4lSb",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        656,
+        -160
+      ],
+      "id": "6297621d-54a4-4242-9304-b14cb8f7d2ec",
+      "name": "HTTP Request",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cheerio = require('cheerio');\n\nreturn $input.all().map(item => {\n  const html = item.json.data;\n  const $ = cheerio.load(html);\n\n  const plainText = $('body').text().replace(/\\s+/g, ' ').trim();\n\n  return {\n    json: {\n      plainText\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -176
+      ],
+      "id": "c620f067-055f-443d-ab7f-4bfa97e89a98",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "jsCode": "const PptxGenJS = require(\"pptxgenjs\");\nconst pptx = new PptxGenJS();\n\nconst raw = $input.first().json.message.content; // OpenAI response as plain text\n\n// Basic slide splitting (you can refine this as needed)\nconst slides = raw.split(/\\n\\s*\\n/).filter(section => section.trim().length > 0);\n\nslides.forEach((section, index) => {\n  const slide = pptx.addSlide();\n  \n  const lines = section.split('\\n').filter(l => l.trim());\n  \n  // First line as title\n  const title = lines.shift();\n  slide.addText(title, { x: 0.5, y: 0.3, fontSize: 20, bold: true });\n\n  // Remaining lines as content\n  slide.addText(lines.join('\\n'), { x: 0.5, y: 1.0, fontSize: 14, lineSpacingMultiple: 1.1 });\n});\n\n// Generate PPTX as binary stream (buffer)\nconst buffer = await pptx.write(\"nodebuffer\");\n\n// Return buffer as binary\nreturn [\n  {\n    binary: {\n      data: {\n        data: buffer.toString(\"base64\"),\n        fileName: \"generated_ppt.pptx\",\n        mimeType: \"application/vnd.openxmlformats-officedocument.presentationml.presentation\"\n      }\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        64
+      ],
+      "id": "6e6e601b-9e5b-4bf5-8da3-b4736926f7ef",
+      "name": "Generate ppt"
+    },
+    {
+      "parameters": {
+        "inputDataFieldName": "=data",
+        "name": "={{ $json.fileName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "root",
+          "cachedResultName": "/ (Root folder)"
+        },
+        "options": {
+          "simplifyOutput": false
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2176,
+        64
+      ],
+      "id": "f367461b-2aa3-447b-a6ca-8401865142c7",
+      "name": "Upload file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "l4a5oDbDGSnkXFgR",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6190fb6c-9d2e-4afc-8809-f1d9798d0669",
+              "name": "fileName",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "50ebb886-fe36-4d46-9919-89777a9b0d4b",
+              "name": "fileLink",
+              "value": "={{ $json.webViewLink }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2416,
+        64
+      ],
+      "id": "83b6cded-98ce-4ae5-9451-07592252b877",
+      "name": "Set Node"
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{ \n $json.type.trim() === \"Public\" ? 0 : $json.type.trim() === \"None\" ? 1 : 2;\n}}"
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -192,
+        64
+      ],
+      "id": "7bd4c189-f413-4800-b116-dbe4959adb23",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "chatgpt-4o-latest",
+          "mode": "list",
+          "cachedResultName": "CHATGPT-4O-LATEST"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are an AI assistant that classifies user inputs into exactly one category:\n\nPublic — user wants public data accessible via internet or a URL search.\n\nPrivate — user wants private data from a local database (e.g., personal/account/company info).\n\nNone — input does not require data lookup or cannot be classified as public/private.\n\nFor the following input, respond with only one word (Public, Private, or None).\nand also extract company name\nInput:\n{{ $json.body.prompt }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        -704,
+        80
+      ],
+      "id": "15f47760-f413-499b-83bb-4fb45cbacf42",
+      "name": "AI Agent",
+      "credentials": {
+        "openAiApi": {
+          "id": "AFvcIPQRNTjt4lSb",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c12e0daa-2750-45d9-bf25-9f1efb7c5403",
+              "name": "companyName",
+              "value": "={{ $json.message.content.split('\\n')[1].trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "11d38c68-fc4a-40ff-b35e-f22b39a6669d",
+              "name": "type",
+              "value": "={{ $json.message.content.split('\\n')[0].trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "d8a9c08d-f108-4dc4-a357-799bf0922a6f",
+              "name": "prompt",
+              "value": "={{ $('Webhook').item.json.body.prompt }}",
+              "type": "string"
+            },
+            {
+              "id": "68309029-fcc6-4a2c-9775-5792361f5d7a",
+              "name": "isPPTRequired",
+              "value": "={{ $json.message.content.split('\\n')[1].trim() === \"Public\" }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -352,
+        80
+      ],
+      "id": "d9a37224-5338-4187-b2a1-59efabb70760",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3c0c80cd-75a7-4086-872e-18a52badcbea",
+              "leftValue": "={{ $('Create Final Prompt').item.json.isPPTRequired}}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        80
+      ],
+      "id": "260dc230-2849-4dae-b7cf-20f3519930ac",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ac0eb3e6-1dad-43a4-91d4-06dffdae33a6",
+              "name": "message",
+              "value": "={{ $json.message.content }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1824,
+        288
+      ],
+      "id": "bbb3c856-00b1-4841-89f0-e0bcae685a6d",
+      "name": "Edit Fields1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Google": {
+      "main": [
+        [
+          {
+            "node": "make a link list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "make a link list": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Final Prompt": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Create Final Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate ppt": {
+      "main": [
+        [
+          {
+            "node": "Upload file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload file": {
+      "main": [
+        [
+          {
+            "node": "Set Node",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Search Google",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Generate ppt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2fb5c76e-cd4b-4255-9968-20a4671bf39b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f89cc1ef2114ea5281f6d57f90cf4fe5477ff1560fe20211c56908c40341e509"
+  },
+  "id": "oFYgh0GdU13UQ0IZ",
+  "tags": []
+}
